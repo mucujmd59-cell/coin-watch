@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Midas'ta TL ile islem goren coinleri, Binance'in ucretsiz genel API'sinden
+Midas'ta TL ile islem goren coinleri, MEXC'in ucretsiz genel API'sinden
 gelen 30 dakikalik mum verisiyle izler.
 
 Kural (kullanicinin tarifine gore):
@@ -9,11 +9,13 @@ Kural (kullanicinin tarifine gore):
   - Bu 3. mumun kapanmasina 5 dakika veya daha az kaldiginda
   -> Telegram'a bildirim gonderir (boylece mum kapanmadan ~5 dk once haber verir)
 
-Midas'in herkese acik bir API'si olmadigi icin fiyat verisi Binance'in
-USDT paritelerinden cekiliyor. Buyuk/likit coinlerde 30 dakikalik mumun
-yon (yesil/kirmizi) bilgisi borsalar arasinda pratikte hemen hemen hep
-ayni cikar; cok dusuk hacimli/yeni coinlerde arada sirada farklilik
-olabilecegini goz onunde bulundurun.
+Midas'in herkese acik bir API'si olmadigi icin fiyat verisi MEXC'in
+USDT paritelerinden cekiliyor (Binance ve Bybit, GitHub Actions'in
+calistigi bulut IP'lerini engelliyor - 451/403 - bu yuzden MEXC secildi;
+MEXC'in genel API'si Binance ile ayni formatta calisir). Buyuk/likit
+coinlerde 30 dakikalik mumun yonu (yesil/kirmizi) borsalar arasinda
+pratikte hemen hemen hep ayni cikar; cok dusuk hacimli/yeni coinlerde
+arada sirada farklilik olabilecegini goz onunde bulundurun.
 """
 
 import json
@@ -23,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
-BINANCE_BASE = "https://api.binance.com"
+MEXC_BASE = "https://api.mexc.com"
 INTERVAL = "30m"
 ALERT_WINDOW_MS = 5 * 60 * 1000  # kapanisa 5 dakika kala
 STATE_FILE = "state.json"
@@ -69,20 +71,20 @@ MIDAS_COINS = [
 ]
 
 
-def get_binance_usdt_symbols():
-    """Binance'de aktif islem goren <TICKER>USDT paritelerinin taban varlik setini dondurur."""
-    r = requests.get(f"{BINANCE_BASE}/api/v3/exchangeInfo", timeout=20)
+def get_mexc_usdt_symbols():
+    """MEXC'te aktif islem goren <TICKER>USDT paritelerinin taban varlik setini dondurur."""
+    r = requests.get(f"{MEXC_BASE}/api/v3/exchangeInfo", timeout=20)
     r.raise_for_status()
     data = r.json()
     symbols = set()
     for s in data["symbols"]:
-        if s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING":
+        if s.get("quoteAsset") == "USDT" and s.get("status") == "ENABLED":
             symbols.add(s["baseAsset"])
     return symbols
 
 
 def fetch_klines(symbol):
-    url = f"{BINANCE_BASE}/api/v3/klines"
+    url = f"{MEXC_BASE}/api/v3/klines"
     params = {"symbol": f"{symbol}USDT", "interval": INTERVAL, "limit": 3}
     r = requests.get(url, params=params, timeout=10)
     if r.status_code != 200:
@@ -153,13 +155,13 @@ def send_telegram(message):
 
 def main():
     try:
-        usdt_symbols = get_binance_usdt_symbols()
+        usdt_symbols = get_mexc_usdt_symbols()
     except requests.RequestException as e:
-        print("Binance exchangeInfo alinamadi:", e)
+        print("MEXC exchangeInfo alinamadi:", e)
         return
 
     candidates = [c for c in MIDAS_COINS if c in usdt_symbols]
-    print(f"{len(MIDAS_COINS)} coin tanimli, {len(candidates)} tanesi Binance USDT paritesinde bulundu.")
+    print(f"{len(MIDAS_COINS)} coin tanimli, {len(candidates)} tanesi MEXC USDT paritesinde bulundu.")
 
     state = load_state()
     hits = []
@@ -170,26 +172,3 @@ def main():
             res = fut.result()
             if not res:
                 continue
-            sym = res["symbol"]
-            if state.get(sym) == res["open_time"]:
-                continue  # bu mum icin zaten bildirim gonderildi
-            hits.append(res)
-            state[sym] = res["open_time"]
-
-    if hits:
-        hits.sort(key=lambda x: x["symbol"])
-        lines = [
-            f"\U0001F7E2 {h['symbol']}USDT - ustuste 3 yesil mum (kapanisa ~{h['remaining_min']} dk kaldi)"
-            for h in hits
-        ]
-        message = "30 dakikalik mumlarda sinyal:\n" + "\n".join(lines)
-        send_telegram(message)
-        print(message)
-    else:
-        print("Sinyal veren coin yok.")
-
-    save_state(state)
-
-
-if __name__ == "__main__":
-    main()
