@@ -184,10 +184,11 @@ def main():
         ]
         message = "30 dakikalik mumlarda sinyal:\n" + "\n".join(lines)
         send_telegram(message)
-        save_state(state)
         print(message)
     else:
         print("Sinyal veren coin yok.")
+
+    save_state(state)
 
 
 if __name__ == "__main__":
